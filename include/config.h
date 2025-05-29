@@ -25,8 +25,9 @@
 
 #define WIFI_CONNECTION_RSSI (-100)
 
-#define DISPLAY_BMP_IMAGE_SIZE 48062 // in bytes - 62 bytes - header; 48000 bytes - bitmap (480*800 1bpp) / 8
-#define DEFAULT_IMAGE_SIZE 48000
+#define DISPLAY_BMP_IMAGE_SIZE 48062 // in bytes - 62 bytes - header; 192000 bytes - bitmap (480*800 1bpp) / 8
+#define DEFAULT_IMAGE_SIZE 192000
+#define OLD_IMAGE_SIZE 48000
 
 #define SLEEP_uS_TO_S_FACTOR 1000000           /* Conversion factor for micro seconds to seconds */
 #define SLEEP_TIME_TO_SLEEP 900                /* Time ESP32 will go to sleep (in seconds) */
@@ -52,6 +53,7 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
 #define PIN_RESET 9
 #define PIN_INTERRUPT 2
 #define PIN_BATTERY 3
+#define PIN_QWIICPOWER 45
 
 #define BUTTON_HOLD_TIME 5000
 

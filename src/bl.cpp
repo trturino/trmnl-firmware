@@ -29,6 +29,7 @@
 #include <SPIFFS.h>
 #include "http_client.h"
 #include <api-client/display.h>
+#include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h> 
 
 bool pref_clear = false;
 String new_filename = "";
@@ -53,6 +54,7 @@ esp_sleep_wakeup_cause_t wakeup_reason = ESP_SLEEP_WAKEUP_UNDEFINED; // wake-up 
 MSG current_msg = NONE;
 SPECIAL_FUNCTION special_function = SF_NONE;
 RTC_DATA_ATTR uint8_t need_to_refresh_display = 1;
+SFE_MAX1704X lipo(MAX1704X_MAX17048);
 
 Preferences preferences;
 
@@ -73,11 +75,14 @@ static void showMessageWithLogo(MSG message_type);
 static void showMessageWithLogo(MSG message_type, String friendly_id, bool id, const char *fw_version, String message);
 static void wifiErrorDeepSleep();
 static uint8_t *storedLogoOrDefault(void);
+static void storedDefaultLogo(uint8_t *in_buffer);
 static bool saveCurrentFileName(String &name);
 static bool checkCurrentFileName(String &newName);
 static DeviceStatusStamp getDeviceStatusStamp();
+static bool batteryInit(void);
 bool SerializeJsonLog(DeviceStatusStamp device_status_stamp, time_t timestamp, int codeline, const char *source_file, char *log_message, uint32_t log_id);
 int submitLog(const char *format, time_t time, int line, const char *file, ...);
+
 
 #define submit_log(format, ...) submitLog(format, getTime(), __LINE__, __FILE__, ##__VA_ARGS__);
 
@@ -125,7 +130,7 @@ void bl_init(void)
   else
   {
     Log.fatal("%s [%d]: preferences init failed\r\n", __FILE__, __LINE__);
-    ESP.restart();
+    ESP.restart(); 
   }
   Log.info("%s [%d]: preferences end\r\n", __FILE__, __LINE__);
 
@@ -201,7 +206,7 @@ void bl_init(void)
     }
     else
     {
-      Log_error("SF not saved");
+      Log.error("SF not saved");
     }
   }
   // EPD init
@@ -212,9 +217,11 @@ void bl_init(void)
   if (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER)
   {
     Log.info("%s [%d]: Display TRMNL logo start\r\n", __FILE__, __LINE__);
-    
-    buffer = (uint8_t *)malloc(DEFAULT_IMAGE_SIZE);
-    display_show_image(storedLogoOrDefault(), false, false);
+
+    buffer = (uint8_t *)ps_malloc(DEFAULT_IMAGE_SIZE);
+    storedDefaultLogo(buffer);
+    display_show_image(buffer, false, false);
+    Log.info("%s [%d]: storedDefaultLogo()\r\n", __FILE__, __LINE__);
     free(buffer);
     buffer = nullptr;
 
@@ -225,7 +232,11 @@ void bl_init(void)
   }
 
   // Mount SPIFFS
+  Log.info("%s [%d]: File system init\r\n", __FILE__, __LINE__);
   filesystem_init();
+
+  Log.info("%s [%d]: Battery init\r\n", __FILE__, __LINE__);
+  batteryInit();
 
   WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP
   if (WifiCaptivePortal.isSaved())
@@ -597,7 +608,7 @@ static https_request_err_e downloadAndShow()
           // we will send a log message back to the server and truncate the timeout to the maximum.
           submit_log("Requested image URL timeout too large (%d ms). Using maximum of %d ms.", requestedTimeout, UINT16_MAX);
           https.setTimeout(UINT16_MAX);
-        } 
+        }
         else {
           https.setTimeout(uint16_t(requestedTimeout));
         }
@@ -663,7 +674,7 @@ static https_request_err_e downloadAndShow()
         ;
 
       Log.info("%s [%d]: Stream available: %d\r\n", __FILE__, __LINE__, stream->available());
-      
+
       bool isPNG = https.header("Content-Type") == "image/png";
       int iteration_counter = 0;
 
@@ -671,7 +682,7 @@ static https_request_err_e downloadAndShow()
 
       Log.info("%s [%d]: Starting a download at: %d\r\n", __FILE__, __LINE__, getTime());
       heap_caps_check_integrity_all(true);
-      buffer = (uint8_t *)malloc(content_size);
+      buffer = (uint8_t *)ps_malloc(content_size);
       int counter2 = content_size;
       while (counter != content_size && millis() - download_start < 10000)
       {
@@ -681,10 +692,10 @@ static https_request_err_e downloadAndShow()
           counter += stream->readBytes(buffer + counter, counter2 -= counter);
           if (counter >= 2) {
             if (buffer[0] == 'B' && buffer[1] == 'M') {
-                isPNG = false;
-                Log.info("BMP file detected");
+              isPNG = false;
+              Log.info("BMP file detected");
             }
-        }
+          }
           iteration_counter++;
         }
 
@@ -705,15 +716,15 @@ static https_request_err_e downloadAndShow()
       Log.info("%s [%d]: Received successfully\r\n", __FILE__, __LINE__);
 
       bool bmp_rename = false;
-      
+
       if(filesystem_file_exists("/current.bmp") || filesystem_file_exists("/current.png")){
         filesystem_file_delete("/last.bmp");
-        filesystem_file_delete("/last.png"); 
+        filesystem_file_delete("/last.png");
         filesystem_file_rename("/current.png","/last.png"); 
         filesystem_file_rename("/current.bmp","/last.bmp");
 
       }
-      
+
       bool image_reverse = false;
 
       if (isPNG)
@@ -734,104 +745,111 @@ static https_request_err_e downloadAndShow()
       uint8_t* imagePointer = (decodedPng == nullptr) ? buffer : decodedPng;
       bool lastImageExists = filesystem_file_exists("/last.bmp") || filesystem_file_exists("/last.png");
 
-      
-        switch (png_res)
-        {
-        case PNG_NO_ERR:
-        {
-        
-          Log.info("Free heap at before display - %d", ESP.getMaxAllocHeap());
-          display_show_image(imagePointer,image_reverse, isPNG);
-  
-          // Using filename from API response
-          new_filename = apiDisplayResult.response.filename;
 
-          // Print the extracted string
-          Log.info("%s [%d]: New filename - %s\r\n", __FILE__, __LINE__, new_filename.c_str());
-  
-          bool res = saveCurrentFileName(new_filename);
-          if (res)
-            Log.info("%s [%d]: New filename saved\r\n", __FILE__, __LINE__);
-          else
-            Log.error("%s [%d]: New image name saving error!", __FILE__, __LINE__);
-  
-          if (result != HTTPS_PLUGIN_NOT_ATTACHED)
-            result = HTTPS_SUCCESS;
-        }
+      switch (png_res)
+      {
+      case PNG_NO_ERR:
+      {
+
+        Log.info("Free heap at before display - %d", ESP.getMaxAllocHeap());
+        u_int8_t *imageNewBpp = (u_int8_t*)ps_malloc(DEFAULT_IMAGE_SIZE);
+        convert1bpp_to_4bpp_fast(decodedPng, OLD_IMAGE_SIZE, imageNewBpp);
+        display_show_image(imageNewBpp, false, isPNG);
+        free(imageNewBpp);
+
+        // Using filename from API response
+        new_filename = apiDisplayResult.response.filename;
+
+        // Print the extracted string
+        Log.info("%s [%d]: New filename - %s\r\n", __FILE__, __LINE__, new_filename.c_str());
+
+        bool res = saveCurrentFileName(new_filename);
+        if (res)
+          Log.info("%s [%d]: New filename saved\r\n", __FILE__, __LINE__);
+        else
+          Log.error("%s [%d]: New image name saving error!", __FILE__, __LINE__);
+
+        if (result != HTTPS_PLUGIN_NOT_ATTACHED)
+          result = HTTPS_SUCCESS;
+      }
+      break;
+      case PNG_WRONG_FORMAT:
+      {
+        error = "Wrong image format. Did not pass signature check";
+      }
+      break;
+      case PNG_BAD_SIZE:
+      {
+        error = "IMAGE width, height or size are invalid";
+      }
+      break;
+      case PNG_DECODE_ERR:
+      {
+        error = "could not decode png image";
+      }
+      break;
+      case PNG_MALLOC_FAILED:
+      {
+        error = "could not allocate memory for png image decoder";
+      }
+      break;
+      default:
         break;
-        case PNG_WRONG_FORMAT:
-        {
-          error = "Wrong image format. Did not pass signature check";
-        }
-        break;
-        case PNG_BAD_SIZE:
-        {
-          error = "IMAGE width, height or size are invalid";
-        }
-        break;
-        case PNG_DECODE_ERR:
-        {
-          error = "could not decode png image";
-        }
-        break;
-        case PNG_MALLOC_FAILED:
-        {
-          error = "could not allocate memory for png image decoder";
-        }
-        break;
-        default:
-          break;
-        }
-  
-        switch (bmp_res)
-        {
-        case BMP_NO_ERR:
-        {
+      }
+
+      switch (bmp_res)
+      {
+      case BMP_NO_ERR:
+      {
           if(!filesystem_file_exists("/current.png")){
             writeImageToFile("/current.bmp",buffer,content_size);
-          }
-          Log.info("Free heap at before display - %d", ESP.getMaxAllocHeap());
-          display_show_image(imagePointer,image_reverse, isPNG);
-  
-          // Using filename from API response
-          new_filename = apiDisplayResult.response.filename;
+        }
+        Log.info("Free heap at before display - %d", ESP.getMaxAllocHeap());
+        uint8_t* imageNewBpp = (uint8_t*)ps_malloc(DEFAULT_IMAGE_SIZE);
+        convert1bpp_to_4bpp_fast(buffer + 62, OLD_IMAGE_SIZE, imageNewBpp);
+        display_show_image(imageNewBpp, image_reverse, isPNG);
+        free(imageNewBpp);
+        Log.info("%s [%d]: Displaying image\r\n", __FILE__, __LINE__);
 
-          // Print the extracted string
-          Log.info("%s [%d]: New filename - %s\r\n", __FILE__, __LINE__, new_filename.c_str());
-  
-          bool res = saveCurrentFileName(new_filename);
-          if (res)
-            Log.info("%s [%d]: New filename saved\r\n", __FILE__, __LINE__);
-          else
-            Log.error("%s [%d]: New image name saving error!", __FILE__, __LINE__);
-  
-          if (result != HTTPS_PLUGIN_NOT_ATTACHED)
-            result = HTTPS_SUCCESS;
-        }
+        // Using filename from API response
+        new_filename = apiDisplayResult.response.filename;
+
+        // Print the extracted string
+        Log.info("%s [%d]: New filename - %s\r\n", __FILE__, __LINE__, new_filename.c_str());
+
+        bool res = saveCurrentFileName(new_filename);
+        if (res)
+          Log.info("%s [%d]: New filename saved\r\n", __FILE__, __LINE__);
+        else
+          Log.error("%s [%d]: New image name saving error!", __FILE__, __LINE__);
+
+        if (result != HTTPS_PLUGIN_NOT_ATTACHED)
+          result = HTTPS_SUCCESS;
+      }
+      break;
+      case BMP_FORMAT_ERROR:
+      {
+        error = "First two header bytes are invalid!";
+      }
+      break;
+      case BMP_BAD_SIZE:
+      {
+        error = "BMP width, height or size are invalid";
+      }
+      break;
+      case BMP_COLOR_SCHEME_FAILED:
+      {
+        error = "BMP color scheme is invalid";
+      }
+      break;
+      case BMP_INVALID_OFFSET:
+      {
+        error = "BMP header offset is invalid";
+      }
+      break;
+      default:
         break;
-        case BMP_FORMAT_ERROR:
-        {
-          error = "First two header bytes are invalid!";
-        }
-        break;
-        case BMP_BAD_SIZE:
-        {
-          error = "BMP width, height or size are invalid";
-        }
-        break;
-        case BMP_COLOR_SCHEME_FAILED:
-        {
-          error = "BMP color scheme is invalid";
-        }
-        break;
-        case BMP_INVALID_OFFSET:
-        {
-          error = "BMP header offset is invalid";
-        }
-        break;
-        default:
-          break;
-        }
+      }
       
 
       if (isPNG && png_res != PNG_NO_ERR)
@@ -1199,7 +1217,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
           if (last_dot_file == "/last.bmp")
           {
             Log.info("Rewind BMP\n\r");
-            buffer = (uint8_t *)malloc(DISPLAY_BMP_IMAGE_SIZE);
+            buffer = (uint8_t *)ps_malloc(DISPLAY_BMP_IMAGE_SIZE);
             file_check_bmp = filesystem_read_from_file(last_dot_file.c_str(), buffer, DISPLAY_BMP_IMAGE_SIZE);
             bmp_proccess_response = parseBMPHeader(buffer, image_reverse);
           }
@@ -1279,7 +1297,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
           if (filesystem_file_exists("/current.bmp"))
           {
             Log.info("%s [%d]: send_to_me BMP\r\n", __FILE__, __LINE__);
-            buffer = (uint8_t *)malloc(DISPLAY_BMP_IMAGE_SIZE);
+            buffer = (uint8_t *)ps_malloc(DISPLAY_BMP_IMAGE_SIZE);
 
             if (!filesystem_read_from_file("/current.bmp", buffer, DISPLAY_BMP_IMAGE_SIZE))
             {
@@ -1534,7 +1552,7 @@ static void getDeviceCredentials()
 
               uint32_t counter = 0;
               // Read and save BMP data to buffer
-              buffer = (uint8_t *) malloc(https.getSize());
+              buffer = (uint8_t *)ps_malloc(https.getSize());
               if (stream->available() && https.getSize() == DISPLAY_BMP_IMAGE_SIZE)
               {
                 counter = stream->readBytes(buffer, DISPLAY_BMP_IMAGE_SIZE);
@@ -1548,8 +1566,11 @@ static void getDeviceCredentials()
 
                 // show the image
                 String friendly_id = preferences.getString(PREFERENCES_FRIENDLY_ID, PREFERENCES_FRIENDLY_ID_DEFAULT);
-                display_show_msg(buffer, FRIENDLY_ID, friendly_id, true, "", String(message_buffer));
+                uint8_t *image = (uint8_t *)ps_malloc(DEFAULT_IMAGE_SIZE);
+                convert1bpp_to_4bpp_fast(buffer + 62, OLD_IMAGE_SIZE, image);
                 free(buffer);
+                display_show_msg(image, FRIENDLY_ID, friendly_id, true, "", String(message_buffer));
+                free(image);
                 buffer = nullptr;
                 need_to_refresh_display = 0;
               }
@@ -1724,8 +1745,8 @@ static void goToSleep(void)
   preferences.putUInt(PREFERENCES_LAST_SLEEP_TIME, getTime());
   preferences.end();
   esp_sleep_enable_timer_wakeup((uint64_t)time_to_sleep * SLEEP_uS_TO_S_FACTOR);
-  esp_deep_sleep_enable_gpio_wakeup(1 << PIN_INTERRUPT,
-                                    ESP_GPIO_WAKEUP_GPIO_LOW);
+  // esp_deep_sleep_enable_gpio_wakeup(1 << PIN_INTERRUPT,
+  //                                   ESP_GPIO_WAKEUP_GPIO_LOW);
   esp_deep_sleep_start();
 }
 
@@ -1760,6 +1781,22 @@ static bool setClock()
   return sync_status;
 }
 
+static bool batteryInit(void)
+{
+  bool status = false;
+  if (lipo.begin())
+  {
+    Log.info("%s [%d]: Battery initialized successfully\r\n", __FILE__, __LINE__);
+    status = true;
+  }
+  else
+  {
+    Log.error("%s [%d]: Battery initialization failed\r\n", __FILE__, __LINE__);
+    ESP.restart();
+  }
+  return status;
+}
+
 /**
  * @brief Function to read the battery voltage
  * @param none
@@ -1768,15 +1805,8 @@ static bool setClock()
 static float readBatteryVoltage(void)
 {
   Log.info("%s [%d]: Battery voltage reading...\r\n", __FILE__, __LINE__);
-  int32_t adc = 0;
-  for (uint8_t i = 0; i < 128; i++)
-  {
-    adc += analogReadMilliVolts(PIN_BATTERY);
-  }
-
-  int32_t sensorValue = (adc / 128) * 2;
-
-  float voltage = sensorValue / 1000.0;
+  float voltage = lipo.getVoltage();
+  Log.info("%s [%d]: Battery voltage - %f\r\n", __FILE__, __LINE__, voltage);
   return voltage;
 }
 
@@ -1903,8 +1933,9 @@ static void writeSpecialFunction(SPECIAL_FUNCTION function)
 
 static void showMessageWithLogo(MSG message_type)
 {
-  buffer = (uint8_t *)malloc(DEFAULT_IMAGE_SIZE);
-  display_show_msg(storedLogoOrDefault(), message_type);
+  buffer = (uint8_t *)ps_malloc(DEFAULT_IMAGE_SIZE);
+  storedDefaultLogo(buffer);
+  display_show_msg(buffer, message_type);
   free(buffer);
   buffer = nullptr;
 
@@ -1914,8 +1945,9 @@ static void showMessageWithLogo(MSG message_type)
 
 static void showMessageWithLogo(MSG message_type, String friendly_id, bool id, const char *fw_version, String message)
 {
-  buffer = (uint8_t *)malloc(DEFAULT_IMAGE_SIZE);
-  display_show_msg(storedLogoOrDefault(), message_type, friendly_id, id, fw_version, message);
+  buffer = (uint8_t *)ps_malloc(DEFAULT_IMAGE_SIZE);
+  storedDefaultLogo(buffer);
+  display_show_msg(buffer, message_type, friendly_id, id, fw_version, message);
   free(buffer);
   buffer = nullptr;
 
@@ -1931,6 +1963,13 @@ static uint8_t *storedLogoOrDefault(void)
   }
   return const_cast<uint8_t *>(default_icon);
 }
+
+static void storedDefaultLogo(uint8_t *in_buffer)
+{
+    get_logo_image(in_buffer);
+}
+
+
 
 static bool saveCurrentFileName(String &name)
 {
@@ -1983,7 +2022,7 @@ static void wifiErrorDeepSleep()
 
   uint8_t retry_count = preferences.getInt(PREFERENCES_CONNECT_WIFI_RETRY_COUNT);
 
-  Log_info("WIFI connection failed! Retry count: %d \n", retry_count);
+  Log.info("WIFI connection failed! Retry count: %d \n", retry_count);
 
   switch (retry_count)
   {

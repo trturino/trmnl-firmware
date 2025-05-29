@@ -1,5 +1,7 @@
 #ifndef DISPLAY_H
 #define DISPLAY_H
+#define OFF_INDEX 0x00        /* 1-bpp ‘0’  → palette index 0 (Black)  */
+#define ON_INDEX  0x01        /* 1-bpp ‘1’  → palette index 1 (White)  */
 
 #include <Arduino.h>
 
@@ -33,6 +35,15 @@ void display_init(void);
  * @return none
  */
 void display_reset(void);
+
+/**
+ * @brief Function to get the logo image
+ * @param image_buffer pointer to the uint8_t image buffer
+ * @return none
+ */
+void get_logo_image(uint8_t *image_buffer);
+
+void convert1bpp_to_4bpp_fast(const uint8_t *src,size_t src_len, uint8_t *dst);
 
 /**
  * @brief Function to read the display height

@@ -1,6 +1,23 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Preferences.h>
+
+/**
+ * @brief Function to delete old versions of plugin images (by comparing the timestamp)
+ *        It also deletes files that are older than 24h to keep SPIFFS from filling up
+ * @param name filename
+ * @return nothing
+ */
+void filesystem_purge_old_file(const char *name);
+
+/**
+ * @brief Function to read a file into a newly allocated buffer
+ * @param name filename
+ * @param out_buffer pointer to pointer of the output buffer
+ * @return filesize in bytes or 0 if failed
+ */
+size_t filesystem_read_and_allocate(const char *name, uint8_t **out_buffer);
 
 /**
  * @brief Function to init the filesystem
@@ -15,6 +32,22 @@ bool filesystem_init(void);
  * @return none
  */
 void filesystem_deinit(void);
+
+/**
+ * @brief Function to delete old versions of plugin images (by comparing the timestamp)
+ *        It also deletes files that are older than 24h to keep SPIFFS from filling up
+ * @param name filename
+ * @return nothing
+ */
+void filesystem_purge_old_file(const char *name);
+
+/**
+ * @brief Function to read a file into a newly allocated buffer
+ * @param name filename
+ * @param out_buffer pointer to pointer of the output buffer
+ * @return filesize in bytes or 0 if failed
+ */
+size_t filesystem_read_and_allocate(const char *name, uint8_t **out_buffer);
 
 /**
  * @brief Function to read data from file
@@ -32,6 +65,43 @@ bool filesystem_read_from_file(const char *name, uint8_t *out_buffer, size_t siz
  * @return result - true if success; false - if failed
  */
 size_t filesystem_write_to_file(const char *name, uint8_t *in_buffer, size_t size);
+
+/**
+ * @brief Function to write an image buffer to a file, logging an error on short writes
+ * @param name filename
+ * @param in_buffer pointer to input buffer
+ * @param size size of the input buffer
+ * @return none
+ */
+void writeImageToFile(const char *name, uint8_t *in_buffer, size_t size);
+
+/**
+ * @brief Update the X playlist order NVS string after a new image becomes current.
+ *        Refreshes an existing same-plugin entry in place, or inserts after prev_path.
+ *        Drops playlist entries whose files no longer exist (except prev_path).
+ * @param preferences NVS "data" namespace
+ * @param new_path path that is now current
+ * @param prev_path previous current path (may be empty)
+ * @return none
+ */
+void update_playlist_order(Preferences &preferences, const char *new_path, const char *prev_path);
+
+/**
+ * @brief Function to shorten a filename (if needed) to fit the SPIFFS file length
+ *        limit of 31 chars + 0 terminator, prefixing the root dir
+ * @param src source filename
+ * @param dest destination buffer (at least 33 bytes)
+ * @return none
+ */
+void filesystem_fix_filename(const char *src, char *dest);
+
+/**
+ * @brief Function to compare the current filename returned from the API server
+ *        with files we previously stored in FLASH (SPIFFS)
+ * @param newName filename returned by the API
+ * @return result - true if the file exists
+ */
+bool filesystem_fixed_file_exists(String &newName);
 
 /**
  * @brief Function to check if file exists
@@ -54,3 +124,12 @@ bool filesystem_file_delete(const char *name);
  * @return result - true if success; false - if failed
  */
 bool filesystem_file_rename(const char *old_name, const char *new_name);
+
+/**
+ * @brief Function to extract the timestamp from a filename
+ * @param filename filename
+ * @return timestamp as uint32_t (0 if timestamp suffix is not present or invalid)
+ */
+uint32_t filesystem_extract_timestamp(const char *filename);
+
+void list_files();

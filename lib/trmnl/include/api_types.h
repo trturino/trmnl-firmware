@@ -2,17 +2,14 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+
+#include "hardware_types.h"
 #include "special_function.h"
+#include "trmnl_log.h"
 
-enum class ApiSetupOutcome
-{
-  Ok,
-  DeserializationError,
-  StatusError
-};
+enum class ApiSetupOutcome { Ok, DeserializationError, StatusError };
 
-struct ApiSetupResponse
-{
+struct ApiSetupResponse {
   ApiSetupOutcome outcome;
   uint16_t status;
   String api_key;
@@ -21,14 +18,20 @@ struct ApiSetupResponse
   String message;
 };
 
-enum class ApiDisplayOutcome
-{
+struct ApiSetupInputs {
+  String baseUrl;
+  String macAddress;
+  String firmwareVersion;
+  String model;
+  String panelId; // EPD revision as hex; empty = unknown (header omitted)
+};
+
+enum class ApiDisplayOutcome {
   Ok,
   DeserializationError,
 };
 
-struct ApiDisplayResponse
-{
+struct ApiDisplayResponse {
   ApiDisplayOutcome outcome;
   String error_detail;
   uint64_t status;
@@ -36,24 +39,90 @@ struct ApiDisplayResponse
   uint32_t image_url_timeout;
   String filename;
   bool update_firmware;
+  bool maximum_compatibility;
   String firmware_url;
   uint64_t refresh_rate;
+  uint32_t temp_profile;
   bool reset_firmware;
   SPECIAL_FUNCTION special_function;
   String action;
+  String touchbar_mode;
 };
 
-struct ApiDisplayInputs
-{
+struct ApiDisplayInputs {
   String baseUrl;
   String apiKey;
   String friendlyId;
+  String updateSource;
   uint32_t refreshRate;
   String macAddress;
   float batteryVoltage;
+  ChargingStatus chargingStatus;
+#ifdef BOARD_TRMNL_X
+  int batteryCount;
+  int batteryCurrent;
+  int currentBatteryCapacity;
+  int maxBatteryCapacity;
+  float batteryTemperature;
+  int stateOfCharge;
+  int stateOfHealth;
+  // Real gas-gauge (Impedance Track) readings, gathered for comparison even
+  // when BYPASS_BQ27427_SOC makes stateOfCharge/etc. above an approximation.
+  int gaugeSoc;
+  int gaugeHealth;
+  int gaugeCapacityRemain;
+  int gaugeCapacityFull;
+#endif
   String firmwareVersion;
+  String firmwareCommit;
+  String model;
+  String panelId; // EPD revision as hex; empty = unknown (header omitted)
   int rssi;
+  String wifiBand;
   int displayWidth;
   int displayHeight;
   SPECIAL_FUNCTION specialFunction;
+  UsbStatus usbStatus;
+  bool imageCached;
+  int prevWakeTime;
+};
+
+struct ApiLogInputs {
+  String macAddress;
+  String apiKey;
+};
+
+typedef struct {
+  char current_image[100];
+  char current_error_message[100];
+} ScreenStatus;
+
+typedef struct DeviceStatusStamp {
+  int8_t wifi_rssi_level;
+  char wifi_status[30];
+  uint32_t refresh_rate;
+  uint32_t time_since_last_sleep;
+  char current_fw_version[10];
+  char special_function[100];
+  float battery_voltage;
+  char wakeup_reason[30];
+  uint32_t free_heap_size;
+  uint32_t max_alloc_size;
+
+  ScreenStatus screen_status;
+
+} DeviceStatusStamp;
+
+struct LogWithDetails {
+  DeviceStatusStamp deviceStatusStamp;
+  time_t timestamp;
+  int codeline;
+  const char *sourceFile;
+  const char *logMessage;
+  uint32_t logId;
+  String filenameCurrent;
+  String filenameNew;
+  bool logRetry;
+  int retryAttempt;
+  LogLevel level;
 };

@@ -1,26 +1,31 @@
-#include <filesystem.h>
 #include <Arduino.h>
+#include <config.h>
+#include <filesystem.h>
+#include <inttypes.h>
+#include <trmnl_log.h>
+
+#if defined(PARALLEL_EPD)
+#include <LittleFS.h>
+#define FS LittleFS
+#else
 #include <SPIFFS.h>
-#include <ArduinoLog.h>
+#define FS SPIFFS
+#endif
 
 /**
  * @brief Function to init the filesystem
  * @param none
  * @return bool result
  */
-bool filesystem_init(void)
-{
-    if (!SPIFFS.begin(true))
-    {
-        Log.fatal("%s [%d]: Failed to mount SPIFFS\r\n", __FILE__, __LINE__);
-        ESP.restart();
-        return false;
-    }
-    else
-    {
-        Log.info("%s [%d]: SPIFFS mounted\r\n", __FILE__, __LINE__);
-        return true;
-    }
+bool filesystem_init(void) {
+  if (!FS.begin(true)) {
+    Log_fatal("Failed to mount filesystem");
+    ESP.restart();
+    return false;
+  } else {
+    Log_info("Filesystem mounted");
+    return true;
+  }
 }
 
 /**
@@ -28,10 +33,51 @@ bool filesystem_init(void)
  * @param none
  * @return none
  */
-void filesystem_deinit(void)
-{
-    SPIFFS.end();
-}
+void filesystem_deinit(void) { FS.end(); }
+
+/**
+ * @brief Function to read a file into a newly allocated buffer
+ * @param name filename
+ * @param out_buffer pointer to pointer of the output buffer
+ * @return filesize in bytes or 0 if failed
+ */
+size_t filesystem_read_and_allocate(const char *name, uint8_t **out_buffer) {
+  uint8_t *buffer;
+  size_t size;
+
+  if (FS.exists(name)) {
+    Log_info("file %s exists", name);
+    File file = FS.open(name, FILE_READ);
+    if (file) {
+      size = file.size();
+      if (size == 0) {
+        Log_error("File %s is empty", name);
+        file.close();
+        return 0;
+      }
+#ifdef CONFIG_SPIRAM
+      buffer = (uint8_t *)ps_malloc(size);
+#else
+      buffer = (uint8_t *)malloc(size);
+#endif
+      if (!buffer) {
+        Log_error("Failed to allocate %d bytes", (int)size);
+        file.close();
+        return 0;
+      }
+      file.readBytes((char *)buffer, size);
+      *out_buffer = buffer;
+      file.close();
+      return size;
+    } else {
+      Log_error("File %s open error", name);
+      return 0;
+    }
+  } else {
+    Log_info("file %s doesn\'t exist", name);
+  }
+  return 0;
+} /* filesystem_read_and_allocate() */
 
 /**
  * @brief Function to read data from file
@@ -39,29 +85,73 @@ void filesystem_deinit(void)
  * @param out_buffer pointer to output buffer
  * @return result - true if success; false - if failed
  */
-bool filesystem_read_from_file(const char *name, uint8_t *out_buffer, size_t size)
-{
-    if (SPIFFS.exists(name))
-    {
-        Log.info("%s [%d]: file %s exists\r\n", __FILE__, __LINE__, name);
-        File file = SPIFFS.open(name, FILE_READ);
-        if (file)
-        {
-            file.readBytes((char *)out_buffer, size);
-            return true;
-        }
-        else
-        {
-            Log.error("%s [%d]: File %s open error\r\n", __FILE__, __LINE__, name);
-            return false;
-        }
+bool filesystem_read_from_file(const char *name, uint8_t *out_buffer, size_t size) {
+  if (FS.exists(name)) {
+    Log_info("file %s exists", name);
+    File file = FS.open(name, FILE_READ);
+    if (file) {
+      file.readBytes((char *)out_buffer, size);
+      return true;
+    } else {
+      Log_error("File %s open error", name);
+      return false;
     }
-    else
-    {
-        Log.error("%s [%d]: file %s doesn\'t exists\r\n", __FILE__, __LINE__, name);
-        return false;
-    }
+  } else {
+    Log_info("file %s doesn\'t exists", name);
+    return false;
+  }
 }
+
+/**
+ * @brief Function to delete old versions of plugin images (by comparing the timestamp)
+ *        It also deletes files that are older than 24h to keep SPIFFS from filling up
+ * @param name filename
+ * @return nothing
+ */
+void filesystem_purge_old_file(const char *name) {
+  uint32_t timestamp;
+  time_t now;
+  File rootDir;
+  char *s, szTemp[32];
+  bool bDel;
+
+  time(&now); // get the current epoch time
+  rootDir = FS.open("/");
+  while (File file = rootDir.openNextFile()) {
+    Log_info("Checking file \"%s\" for deletion", file.name());
+
+    if (file.isDirectory()) {
+      Log_info("Skipping directory \"%s\"", file.name());
+      file.close();
+      continue;
+    }
+
+    s = (char *)file.name();
+
+    timestamp = filesystem_extract_timestamp(s);
+    bDel = false;
+
+    strcpy(szTemp, "/"); // needed on this file operation
+    strcat(szTemp, file.name());
+
+    Log_info("Comparing name %s with %s, timestamp %" PRIu32 ", current time %" PRIu32, name, file.name(), timestamp,
+             (uint32_t)now);
+    if (strncmp(name, szTemp, 14) == 0) { // older version of the same file
+      Log_info("Deleting older version of plugin image %s - %s", name, file.name());
+      bDel = true;
+    } else if ((uint32_t)now > timestamp + 60 * 60 * 24) { // More than 24h old, or no timestamp
+      Log_info("Deleting image older than 24h - %s", file.name());
+      bDel = true;
+    }
+    if (bDel) { // to avoid double code
+      Log_info("Deleting file %s", szTemp);
+      file.close();
+      FS.remove(szTemp);
+    }
+  }
+  rootDir.close();
+
+} /* filesystem_purge_old_file() */
 
 /**
  * @brief Function to write data to file
@@ -70,61 +160,49 @@ bool filesystem_read_from_file(const char *name, uint8_t *out_buffer, size_t siz
  * @param size size of the input buffer
  * @return size of written bytes
  */
-size_t filesystem_write_to_file(const char *name, uint8_t *in_buffer, size_t size)
-{
-    uint32_t SPIFFS_freeBytes = (SPIFFS.totalBytes() - SPIFFS.usedBytes());
-    Log.info("%s [%d]: SPIFFS freee space - %d, total -%d\r\n", __FILE__, __LINE__, SPIFFS_freeBytes,SPIFFS.totalBytes());
-    if (SPIFFS.exists(name))
-    {
-        Log.info("%s [%d]: file %s exists. Deleting...\r\n", __FILE__, __LINE__, name);
-        if (SPIFFS.remove(name))
-            Log.info("%s [%d]: file %s deleted\r\n", __FILE__, __LINE__, name);
-        else
-            Log.info("%s [%d]: file %s deleting failed\r\n", __FILE__, __LINE__, name);
-    }
+size_t filesystem_write_to_file(const char *name, uint8_t *in_buffer, size_t size) {
+  uint32_t FS_freeBytes = (FS.totalBytes() - FS.usedBytes());
+  Log_info("FS free space - %" PRIu32 ", total -%zu", FS_freeBytes, FS.totalBytes());
+  if (FS.exists(name)) {
+    Log_info("file %s exists. Deleting...", name);
+    if (FS.remove(name))
+      Log_info("file %s deleted", name);
     else
-    {
-        Log.info("%s [%d]: file %s not exists.\r\n", __FILE__, __LINE__, name);
-    }
-    delay(100);
-    File file = SPIFFS.open(name, FILE_WRITE);
-    if (file)
-    {
+      Log_info("file %s deleting failed", name);
+  } else {
+    Log_info("file %s doesn't exist.", name);
+  }
+//    delay(100);
+  File file = FS.open(name, FILE_WRITE, true);
+  if (file) {
         // Write the buffer in chunks
-        size_t bytesWritten = 0;
-        while (bytesWritten < size)
-        {
+    size_t bytesWritten = 0;
+    while (bytesWritten < size) {
 
-            size_t diff = size - bytesWritten;
-            size_t chunkSize = _min(4096, diff);
-            uint16_t res = file.write(in_buffer + bytesWritten, chunkSize);
-            if (res != chunkSize)
-            {
-                file.close();
-
-                Log.info("%s [%d]: Erasing SPIFFS...\r\n", __FILE__, __LINE__);
-                if (SPIFFS.format())
-                {
-                    Log.info("%s [%d]: SPIFFS erased successfully.\r\n", __FILE__, __LINE__);
-                }
-                else
-                {
-                    Log.error("%s [%d]: Error erasing SPIFFS.\r\n", __FILE__, __LINE__);
-                }
-
-                return bytesWritten;
-            }
-            bytesWritten += chunkSize;
-        }
-        Log.info("%s [%d]: file %s writing success - %d bytes\r\n", __FILE__, __LINE__, name, bytesWritten);
+      size_t diff = size - bytesWritten;
+      size_t chunkSize = _min(4096, diff);
+      uint16_t res = file.write(in_buffer + bytesWritten, chunkSize);
+      if (res != chunkSize) {
         file.close();
+
+        Log_info("Erasing FS...");
+        if (FS.format()) {
+          Log_info("FS erased successfully.");
+        } else {
+          Log_error("Error erasing FS.");
+        }
+
         return bytesWritten;
+      }
+      bytesWritten += chunkSize;
     }
-    else
-    {
-        Log.error("%s [%d]: File open ERROR\r\n", __FILE__, __LINE__);
-        return 0;
-    }
+    Log_info("file %s writing success - %d bytes", name, bytesWritten);
+    file.close();
+    return bytesWritten;
+  } else {
+    Log_error("File open ERROR");
+    return 0;
+  }
 }
 
 /**
@@ -132,18 +210,14 @@ size_t filesystem_write_to_file(const char *name, uint8_t *in_buffer, size_t siz
  * @param name filename
  * @return result - true if exists; false - if not exists
  */
-bool filesystem_file_exists(const char *name)
-{
-    if (SPIFFS.exists(name))
-    {
-        Log.info("%s [%d]: file %s exists.\r\n", __FILE__, __LINE__, name);
-        return true;
-    }
-    else
-    {
-        Log.error("%s [%d]: file %s not exists.\r\n", __FILE__, __LINE__, name);
-        return false;
-    }
+bool filesystem_file_exists(const char *name) {
+  if (FS.exists(name)) {
+    Log_info("file %s exists.", name);
+    return true;
+  } else {
+    Log_info("file %s does not exist.", name);
+    return false;
+  }
 }
 
 /**
@@ -151,26 +225,19 @@ bool filesystem_file_exists(const char *name)
  * @param name filename
  * @return result - true if success; false - if failed
  */
-bool filesystem_file_delete(const char *name)
-{
-    if (SPIFFS.exists(name))
-    {
-        if (SPIFFS.remove(name))
-        {
-            Log.info("%s [%d]: file %s deleted\r\n", __FILE__, __LINE__, name);
-            return true;
-        }
-        else
-        {
-            Log.error("%s [%d]: file %s deleting failed\r\n", __FILE__, __LINE__, name);
-            return false;
-        }
+bool filesystem_file_delete(const char *name) {
+  if (FS.exists(name)) {
+    if (FS.remove(name)) {
+      Log_info("file %s deleted", name);
+      return true;
+    } else {
+      Log_error("file %s deleting failed", name);
+      return false;
     }
-    else
-    {
-        Log.info("%s [%d]: file %s doesn't exist\r\n", __FILE__, __LINE__, name);
-        return true;
-    }
+  } else {
+    Log_info("file %s doesn't exist", name);
+    return true;
+  }
 }
 
 /**
@@ -179,24 +246,137 @@ bool filesystem_file_delete(const char *name)
  * @param new_name new filename
  * @return result - true if success; false - if failed
  */
-bool filesystem_file_rename(const char *old_name, const char *new_name)
-{
-    if (SPIFFS.exists(old_name))
-    {
-        Log.info("%s [%d]: file %s exists.\r\n", __FILE__, __LINE__, old_name);
-        bool res = SPIFFS.rename(old_name, new_name);
-        if (res)
-        {
-            Log.info("%s [%d]: file %s renamed to %s.\r\n", __FILE__, __LINE__, old_name, new_name);
-            return true;
-        }
-        else
-            Log.error("%s [%d]: file %s wasn't renamed.\r\n", __FILE__, __LINE__, old_name);
-            return false;
-    }
-    else
-    {
-        Log.error("%s [%d]: file %s not exists.\r\n", __FILE__, __LINE__, old_name);
-        return false;
-    }
+bool filesystem_file_rename(const char *old_name, const char *new_name) {
+  if (FS.exists(old_name)) {
+    Log_info("file %s exists.", old_name);
+    bool res = FS.rename(old_name, new_name);
+    if (res) {
+      Log_info("file %s renamed to %s.", old_name, new_name);
+      return true;
+    } else
+      Log_error("file %s wasn't renamed.", old_name);
+    return false;
+  } else {
+    Log_info("file %s not exists.", old_name);
+    return false;
+  }
 }
+
+void list_files() {
+  Log_info("Filesystem Usage: %d/%d", FS.usedBytes(), FS.totalBytes());
+  File rootDir = FS.open("/");
+
+  while (File file = rootDir.openNextFile()) {
+    Log_info("  %d  %s", file.size(), file.name());
+  }
+  rootDir.close();
+}
+
+uint32_t filesystem_extract_timestamp(const char *filename) {
+  if (strlen(filename) < 10) {
+    return 0;
+  }
+
+  const char *szTimestamp = &filename[strlen(filename) - 10];
+  bool is_numeric = true;
+
+  for (int i = 0; i < 10 && is_numeric; i++) {
+    is_numeric = (szTimestamp[i] >= '0' && szTimestamp[i] <= '9');
+  }
+
+  if (is_numeric) {
+    return (uint32_t)atoi(szTimestamp);
+  } else {
+    return 0;
+  }
+}
+
+void writeImageToFile(const char *name, uint8_t *in_buffer, size_t size) {
+  size_t res = filesystem_write_to_file(name, in_buffer, size);
+  if (res != size) {
+    Log_error_submit("File writing ERROR. Result - %d", res);
+  } else {
+    Log_info("file %s writing success - %d bytes", name, res);
+  }
+}
+
+void update_playlist_order(Preferences &preferences, const char *new_path, const char *prev_path) {
+  String order = preferences.getString(PREFERENCES_PLAYLIST_ORDER_KEY, "");
+  String newStr = String(new_path);
+  String prefix = newStr.substring(0, 14); // same-plugin identity (matches purge logic)
+  String prevStr = String(prev_path);
+
+  if (order.isEmpty()) {
+    preferences.putString(PREFERENCES_PLAYLIST_ORDER_KEY, newStr);
+    return;
+  }
+
+  // Scan list: update in-place if prefix matches (refresh), otherwise build a cleaned list
+  // dropping entries whose files no longer exist (except prev_path, which anchors insertion).
+  bool found = false;
+  String result = "";
+  int start = 0;
+  while (start <= (int)order.length()) {
+    int sep = order.indexOf('|', start);
+    String entry = (sep < 0) ? order.substring(start) : order.substring(start, sep);
+    if (!entry.isEmpty()) {
+      if (!found && entry.startsWith(prefix)) {
+        result += (result.isEmpty() ? "" : "|") + newStr;
+        found = true;
+      } else if (entry == prevStr || filesystem_file_exists(entry.c_str())) {
+        result += (result.isEmpty() ? "" : "|") + entry;
+      }
+      // else: file was purged from filesystem — drop from list
+    }
+    if (sep < 0) break;
+    start = sep + 1;
+  }
+  if (found) {
+    preferences.putString(PREFERENCES_PLAYLIST_ORDER_KEY, result);
+    return;
+  }
+
+  // New plugin — insert right after prev_path's position in the cleaned list
+  String result2 = "";
+  bool inserted = false;
+  start = 0;
+  while (start <= (int)result.length()) {
+    int sep = result.indexOf('|', start);
+    String entry = (sep < 0) ? result.substring(start) : result.substring(start, sep);
+    if (!entry.isEmpty()) {
+      result2 += (result2.isEmpty() ? "" : "|") + entry;
+      if (!inserted && entry == prevStr) {
+        result2 += "|" + newStr;
+        inserted = true;
+      }
+    }
+    if (sep < 0) break;
+    start = sep + 1;
+  }
+  if (!inserted) result2 += (result2.isEmpty() ? "" : "|") + newStr;
+  preferences.putString(PREFERENCES_PLAYLIST_ORDER_KEY, result2);
+}
+
+void filesystem_fix_filename(const char *src, char *dest) {
+  int iLen;
+
+  // SPIFFS only allows 32 bytes for the name, so if it's too long, fix it
+  dest[0] = '/'; // SPIFFS requires files to start with the root dir
+  iLen = strlen(src);
+  if (iLen > 31) {
+    memcpy(&dest[1], src, 7);          // first 7 chars are "plugin-" or "mashup-"
+    strcpy(&dest[8],
+           &src[iLen - 17]); // get the prefix name and unique id plus timestamp (e.g. mashup-066cc3-1771674964)
+  } else {
+    strncpy(&dest[1], src, 31); // use it as-is
+  }
+} /* filesystem_fix_filename() */
+
+bool filesystem_fixed_file_exists(String &newName) {
+  char szTemp[36];
+
+  filesystem_fix_filename(
+    newName.c_str(),
+    szTemp); // shorten the name (if needed) to fit the SPIFFS file length limit of 31 chars + 0 terminator
+  return filesystem_file_exists(szTemp);
+} /* filesystem_fixed_file_exists() */

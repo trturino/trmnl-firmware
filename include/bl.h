@@ -1,6 +1,9 @@
 #ifndef BL_H
 #define BL_H
 
+#include "display.h"
+#include "trmnl_log.h"
+
 /**
  * @brief Function to init business logic module
  * @param none
@@ -15,27 +18,33 @@ void bl_init(void);
  */
 void bl_process(void);
 
-typedef struct 
-{
-    char current_image[100];
-    char current_error_message[100];
-} ScreenStatus;
+/**
+ * @brief Prepares peripherals for deep sleep and enters it. Does not return.
+ */
+void goToSleep(void);
 
-typedef struct DeviceStatusStamp
-{
-    int8_t wifi_rssi_level;
-    char wifi_status[30];
-    uint32_t refresh_rate;
-    uint32_t time_since_last_sleep;
-    char current_fw_version[10];
-    char special_function[100];
-    float battery_voltage;
-    char wakeup_reason[30];
-    uint32_t free_heap_size;
-    uint32_t max_alloc_size;
+/**
+ * @brief Shows a full-screen message with the TRMNL logo.
+ * @param message_type Which message to show.
+ */
+void showMessageWithLogo(MSG message_type);
 
-    ScreenStatus screen_status;
-    
-} DeviceStatusStamp;
+/**
+ * @brief Shows a full-screen message with the TRMNL logo and extra device
+ * details (friendly ID, firmware version, an extra message line).
+ */
+void showMessageWithLogo(MSG message_type, String friendly_id, bool id, const char *fw_version, String message);
+
+/**
+ * @brief Clears stored WiFi/API credentials and restarts the device.
+ */
+void resetDeviceCredentials(void);
+
+enum LogAction { LOG_ACTION_STORE, LOG_ACTION_SUBMIT, LOG_ACTION_SUBMIT_OR_STORE };
+
+void logWithAction(LogAction action, LogLevel level, const char *message, time_t time, int line, const char *file);
+
+bool submitLogString(const char *log_buffer);
+bool storeLogString(const char *log_buffer);
 
 #endif

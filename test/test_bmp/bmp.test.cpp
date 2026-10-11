@@ -1,16 +1,13 @@
-#include <unity.h>
 #include <bmp.h>
-#include <string.h>
 #include <fstream>
+#include <string.h>
+#include <unity.h>
 #include <vector>
 
-std::vector<uint8_t> readBMPFile(const char *filename)
-{
-  try
-  {
+std::vector<uint8_t> readBMPFile(const char *filename) {
+  try {
     std::ifstream file(filename, std::ios::binary);
-    if (!file.is_open())
-    {
+    if (!file.is_open()) {
       throw std::runtime_error("Failed to open BMP file.");
     }
 
@@ -27,15 +24,12 @@ std::vector<uint8_t> readBMPFile(const char *filename)
     file.close();
 
     return buffer;
-  }
-  catch (const std::exception &e)
-  {
+  } catch (const std::exception &e) {
     TEST_FAIL_MESSAGE(e.what());
   }
 }
 
-void test_parseBMPHeader_BMP_NO_ERR(void)
-{
+void test_parseBMPHeader_BMP_NO_ERR(void) {
   auto bmp_data = readBMPFile("./test.bmp");
   bool image_reverse = false;
 
@@ -45,8 +39,7 @@ void test_parseBMPHeader_BMP_NO_ERR(void)
   TEST_ASSERT_EQUAL(false, image_reverse);
 }
 
-void test_parseBMPHeader_BMP_NO_ERR_reversed(void)
-{
+void test_parseBMPHeader_BMP_NO_ERR_reversed(void) {
   auto bmp_data = readBMPFile("./test.bmp");
   bool image_reverse = false;
 
@@ -63,8 +56,34 @@ void test_parseBMPHeader_BMP_NO_ERR_reversed(void)
   TEST_ASSERT_EQUAL(true, image_reverse);
 }
 
-void test_parseBMPHeader_NOT_BMP(void)
-{
+void test_bmpNormalizePolarity_standard(void) {
+  auto bmp_data = readBMPFile("./test.bmp");
+  uint8_t pixels[2] = {0x0f, 0xa5};
+
+  TEST_ASSERT_FALSE(bmpIsPaletteReversed(bmp_data.data()));
+  bmpNormalizePolarity(bmp_data.data(), pixels, sizeof(pixels));
+  TEST_ASSERT_EQUAL_HEX8(0x0f, pixels[0]);
+  TEST_ASSERT_EQUAL_HEX8(0xa5, pixels[1]);
+}
+
+void test_bmpNormalizePolarity_reversed(void) {
+  auto bmp_data = readBMPFile("./test.bmp");
+  uint8_t pixels[2] = {0x0f, 0xa5};
+
+  bmp_data[54] = 255;
+  bmp_data[55] = 255;
+  bmp_data[56] = 255;
+  bmp_data[58] = 0;
+  bmp_data[59] = 0;
+  bmp_data[60] = 0;
+
+  TEST_ASSERT_TRUE(bmpIsPaletteReversed(bmp_data.data()));
+  bmpNormalizePolarity(bmp_data.data(), pixels, sizeof(pixels));
+  TEST_ASSERT_EQUAL_HEX8(0xf0, pixels[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x5a, pixels[1]);
+}
+
+void test_parseBMPHeader_NOT_BMP(void) {
   auto bmp_data = readBMPFile("./test.bmp");
   bool image_reverse = false;
 
@@ -73,8 +92,7 @@ void test_parseBMPHeader_NOT_BMP(void)
   TEST_ASSERT_EQUAL(BMP_NOT_BMP, parseBMPHeader(bmp_data.data(), image_reverse));
 }
 
-void test_parseBMPHeader_BMP_BAD_SIZE(void)
-{
+void test_parseBMPHeader_BMP_BAD_SIZE(void) {
   auto bmp_data = readBMPFile("./test.bmp");
   bool image_reverse = false;
 
@@ -83,8 +101,7 @@ void test_parseBMPHeader_BMP_BAD_SIZE(void)
   TEST_ASSERT_EQUAL(BMP_BAD_SIZE, parseBMPHeader(bmp_data.data(), image_reverse));
 }
 
-void test_parseBMPHeader_BMP_COLOR_SCHEME_FAILED(void)
-{
+void test_parseBMPHeader_BMP_COLOR_SCHEME_FAILED(void) {
   auto bmp_data = readBMPFile("./test.bmp");
   bool image_reverse = false;
 
@@ -93,8 +110,7 @@ void test_parseBMPHeader_BMP_COLOR_SCHEME_FAILED(void)
   TEST_ASSERT_EQUAL(BMP_COLOR_SCHEME_FAILED, parseBMPHeader(bmp_data.data(), image_reverse));
 }
 
-void test_parseBMPHeader_BMP_INVALID_OFFSET(void)
-{
+void test_parseBMPHeader_BMP_INVALID_OFFSET(void) {
   auto bmp_data = readBMPFile("./test.bmp");
   bool image_reverse = false;
 
@@ -111,11 +127,12 @@ void tearDown(void) {
   // clean stuff up here
 }
 
-void process()
-{
+void process() {
   UNITY_BEGIN();
   RUN_TEST(test_parseBMPHeader_BMP_NO_ERR);
   RUN_TEST(test_parseBMPHeader_BMP_NO_ERR_reversed);
+  RUN_TEST(test_bmpNormalizePolarity_standard);
+  RUN_TEST(test_bmpNormalizePolarity_reversed);
   RUN_TEST(test_parseBMPHeader_NOT_BMP);
   RUN_TEST(test_parseBMPHeader_BMP_BAD_SIZE);
   RUN_TEST(test_parseBMPHeader_BMP_COLOR_SCHEME_FAILED);
@@ -123,8 +140,7 @@ void process()
   UNITY_END();
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   process();
   return 0;
 }

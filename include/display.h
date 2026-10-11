@@ -1,26 +1,56 @@
 #ifndef DISPLAY_H
 #define DISPLAY_H
-#define OFF_INDEX 0x00        /* 1-bpp ‘0’  → palette index 0 (Black)  */
-#define ON_INDEX  0x01        /* 1-bpp ‘1’  → palette index 1 (White)  */
 
 #include <Arduino.h>
+#ifndef _NO_DEV_CONFIG_
+#include "config.h"
+#endif
 
 enum MSG {
   NONE,
   FRIENDLY_ID,
+  OTG_TURNED_ON,
+  OTG_TURNED_OFF,
+  MODEM_FLASHING,
+  MODEM_FLASH_FAILED,
+  READY_TO_SHIP,
+  SHIPPING_MODE,
+  WIFI_RESET_CONFIRM,
+  POWER_OFF_CONFIRM,
   WIFI_CONNECT,
   WIFI_FAILED,
   WIFI_WEAK,
   WIFI_INTERNAL_ERROR,
+  WIFI_IMAGE_TIMEOUT,
   API_ERROR,
   API_SIZE_ERROR,
+  API_UNABLE_TO_CONNECT,
+  API_SETUP_FAILED,
+  API_IMAGE_DOWNLOAD_ERROR,
+  API_FIRMWARE_UPDATE_ERROR,
   FW_UPDATE,
+  QA_START,
   FW_UPDATE_FAILED,
   FW_UPDATE_SUCCESS,
-  BMP_FORMAT_ERROR,
+  MSG_FORMAT_ERROR,
+  MSG_TOO_BIG,
   MAC_NOT_REGISTERED,
   TEST,
+  FILL_WHITE,
+  WIFI_RETRY_LIMIT,
+  CAPTIVE_WIFI_TIMEOUT,
+  IMAGE_DOWNLOAD_FAILED,
 };
+
+typedef struct dp_tag {
+  uint32_t OneBit, TwoBit; // profiles for 1 and 2-bit modes
+} DISPLAY_PROFILE;
+
+typedef struct theBrand {
+  char name[16];
+  char api_url[128];
+  uint8_t u8Images[3952];
+} BRAND;
 
 /**
  * @brief Function to init the display
@@ -30,20 +60,51 @@ enum MSG {
 void display_init(void);
 
 /**
+ * @brief Panel ID (EPD revision) as 8 hex digits for the Panel-Rev request header
+ * @return hex string, or empty if the ID is unknown/not read
+ */
+String display_panel_rev_string(void);
+
+uint8_t tca9535_interrupt_clear();
+void config_bma530_interrupt();
+void config_tca95535_pins_for_lp();
+void enter_shipment_sleep();
+void BQ27427_reset();
+void otg_turn_on();
+void otg_turn_off();
+
+typedef enum {
+  BATTERY_NONE = 0, // no battery — pin stayed HIGH (timeout >6000 µs)
+  BATTERY_ONE = 1,  // one 6K cell — discharge > 1100 µs
+  BATTERY_TWO = 2,  // two 6K cells — discharge ≤ 1100 µs
+} battery_count_t;
+
+battery_count_t detect_battery_count();
+
+extern "C" {
+  void modem_enter_bootloader();
+  void modem_reset_target();
+}
+
+/**
+ * @brief Diagnostic function to continuously show the battery voltage
+ * @param none
+ * @return none
+ */
+void display_show_battery(float f);
+
+/**
  * @brief Function to reset the display
  * @param none
  * @return none
  */
 void display_reset(void);
 
-/**
- * @brief Function to get the logo image
- * @param image_buffer pointer to the uint8_t image buffer
- * @return none
- */
-void get_logo_image(uint8_t *image_buffer);
-
-void convert1bpp_to_4bpp_fast(const uint8_t *src,size_t src_len, uint8_t *dst);
+typedef enum {
+  TOUCHBAR_LEFT,
+  TOUCHBAR_MIDDLE,
+  TOUCHBAR_RIGHT,
+} touchbar_side_t;
 
 /**
  * @brief Function to read the display height
@@ -58,12 +119,37 @@ uint16_t display_height();
 uint16_t display_width();
 
 /**
- * @brief Function to show the image on the display
- * @param image_buffer pointer to the uint8_t image buffer
- * @param reverse shows if the color scheme is reverse 
+ * @brief Function to draw multi-line text onto the display
+ * @param x_start X coordinate to start drawing
+ * @param y_start Y coordinate to start drawing
+ * @param message Text message to draw
+ * @param max_width Maximum width in pixels for each line
+ * @param font_width Width of a single character in pixels
+ * @param color_fg Foreground color
+ * @param color_bg Background color
+ * @param font Font to use
+ * @param is_center_aligned If true, center the text; if false, left-align
  * @return none
  */
-void display_show_image(uint8_t * image_buffer, bool reverse, bool isPNG);
+void Paint_DrawMultilineText(UWORD x_start, UWORD y_start, const char *message, uint16_t max_width, UWORD color_fg,
+                             UWORD color_bg, const void *font);
+
+/**
+ * @brief Function to show the image on the display
+ * @param image_buffer pointer to the uint8_t image buffer
+ * @param reverse shows if the color scheme is reverse
+ * @return none
+ */
+
+void display_show_image(uint8_t *image_buffer, int data_size, bool bWait, bool bSkipClear = false);
+
+/**
+ * @brief Function to read an image from the file system
+ * @param filename
+ * @param pointer to file size returned
+ * @return pointer to allocated buffer
+ */
+uint8_t *display_read_file(const char *filename, int *file_size);
 
 /**
  * @brief Function to show the image with message on the display
@@ -71,7 +157,7 @@ void display_show_image(uint8_t * image_buffer, bool reverse, bool isPNG);
  * @param message_type type of message that will show on the screen
  * @return none
  */
-void display_show_msg(uint8_t * image_buffer, MSG message_type);
+void display_show_msg(uint8_t *image_buffer, MSG message_type, const char *message_text = nullptr);
 
 /**
  * @brief Function to show the image with message on the display
@@ -83,7 +169,34 @@ void display_show_msg(uint8_t * image_buffer, MSG message_type);
  * @param message additional message
  * @return none
  */
-void display_show_msg(uint8_t * image_buffer, MSG message_type, String friendly_id, bool id, const char * fw_version, String message);
+void display_show_msg(uint8_t *image_buffer, MSG message_type, String friendly_id, bool id, const char *fw_version,
+                      String message);
+
+/**
+ * @brief Function to show the image with API response message on the display
+ * @param image_buffer pointer to the uint8_t image buffer
+ * @param message message text from API response
+ * @return none
+ */
+void display_show_msg_api(uint8_t *image_buffer, String message);
+
+void display_show_msg_qa(const float *voltage, const float *temperature, bool qa_result);
+
+/**
+ * @brief Enable or disable light sleep at runtime
+ * @param enabled true to enable light sleep, false to disable
+ * @return none
+ */
+void display_draw_touchbar_indicator(touchbar_side_t side, bool filled);
+// progress: 0.0 = empty (border only), 1.0 = fully filled; draws a growing left-to-right bar
+void display_draw_touchbar_progress(touchbar_side_t side, float progress);
+
+// Draws two touchbar pills in a single hardware refresh pass, so they update
+// simultaneously instead of one after another.
+void display_draw_touchbar_progress_pair(touchbar_side_t side_a, float progress_a, touchbar_side_t side_b,
+                                         float progress_b);
+
+void display_set_light_sleep(uint8_t enabled);
 
 /**
  * @brief Function to got the display to the sleep
@@ -91,5 +204,12 @@ void display_show_msg(uint8_t * image_buffer, MSG message_type, String friendly_
  * @return none
  */
 void display_sleep(void);
+
+/**
+ * @brief Function to wipe the display
+ * @param none
+ * @return none
+ */
+void display_wipe(void);
 
 #endif

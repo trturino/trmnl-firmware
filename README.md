@@ -1,22 +1,103 @@
-# TRMNL Firmware
+# SparkFun Spectra 6 TRMNL Firmware
 
-## SparkFun / Spectra 6 custom build
+A custom [TRMNL firmware](https://github.com/usetrmnl/trmnl-firmware) fork for a
+SparkFun ESP32-S3 Thing Plus and a Waveshare 7.3-inch (E) Spectra 6 color e-paper
+display. This repository is maintained by Rafael Turino at
+[trturino/firmware](https://github.com/trturino/firmware).
 
-This fork defaults to `sparkfun_esp32s3_thing_plus`: SparkFun ESP32-S3 Thing Plus
-(4 MB flash, 2 MB QSPI PSRAM) with the Waveshare 7.3-inch (E) 800×480
-Spectra 6 panel. Upstream `bb_epaper` now supplies the six-color driver and
-BMP/PNG rendering; the original `lib/epd7in3e` sources remain as a reference
-and are excluded from this build. Its original panel initialization registers
-are preserved in `include/sparkfun_spectra6.h`; all refreshes use the full waveform.
+## Project goal
 
-Wiring: SCK 12, MOSI 11, CS 10, RST 15, DC 14, BUSY 16. SPI remains at
-2 MHz. The MAX17048 uses SDA 8 / SCL 9, with Qwiic enable on GPIO 45.
-GPIO 2 remains the action input; timed deep sleep preserves the original
-wakeup behavior. Display refreshes keep the CPU awake, matching the original
-firmware and keeping USB diagnostics available; timed deep sleep remains enabled.
-GPIO 9 is the I2C clock, not a reset-button input.
+Build a DIY six-color TRMNL display that downloads images over Wi-Fi, renders
+them on an 800 × 480 e-paper panel, and sleeps between scheduled updates. The
+fork preserves the custom board's wiring, display initialization, battery
+monitoring, and USB diagnostics while incorporating upstream firmware changes.
+Automatic Wi-Fi recovery makes the device usable without a dedicated setup button.
 
-Build and test:
+This is a custom hardware project under development. The default build targets
+the SparkFun board; upstream TRMNL device environments remain in the repository.
+
+## Hardware and wiring
+
+- **Controller:** SparkFun ESP32-S3 Thing Plus, 4 MB flash and 2 MB QSPI PSRAM.
+- **Display:** Waveshare 7.3-inch (E), 800 × 480, Spectra 6 panel.
+- **Battery monitoring:** MAX17048 over I2C.
+
+| Connection | ESP32-S3 GPIO |
+| --- | --- |
+| Display SCK | 12 |
+| Display MOSI | 11 |
+| Display CS | 10 |
+| Display RST | 15 |
+| Display DC | 14 |
+| Display BUSY | 16 |
+| MAX17048 SDA | 8 |
+| MAX17048 SCL | 9 |
+| Qwiic enable | 45 |
+| Optional action input | 2 |
+
+Display SPI runs at 2 MHz. GPIO 9 is the I2C clock; it is not a reset-button input.
+Power and ground connections must match your board and display module.
+
+## What this fork changes
+
+- Uses `sparkfun_esp32s3_thing_plus` as the default PlatformIO environment.
+- Uses upstream `bb_epaper` for six-color display driving and BMP/PNG rendering.
+  The panel's original initialization registers are preserved in
+  [`include/sparkfun_spectra6.h`](include/sparkfun_spectra6.h). All refreshes use
+  the full waveform. The original `lib/epd7in3e` driver remains as a reference
+  and is excluded from this build.
+- Keeps the CPU awake during display refreshes so USB diagnostics remain
+  available, then uses timed deep sleep between updates.
+- Opens Wi-Fi setup automatically when connection to the saved network fails.
+- Retains the `no_ota.csv` partition layout, NVS credentials, and SPIFFS image
+  storage. Firmware OTA is disabled; updates use USB.
+- Skips factory QA routines that target stock TRMNL hardware.
+
+## Build and upload
+
+Use PlatformIO CLI, or open this repository in VS Code with the PlatformIO
+extension. Native tests also require a host C/C++ compiler; the Wi-Fi regression
+check requires Python 3.
+
+```sh
+git clone https://github.com/trturino/firmware.git
+cd firmware
+pio run -e sparkfun_esp32s3_thing_plus
+```
+
+The firmware binary is generated at
+`.pio/build/sparkfun_esp32s3_thing_plus/firmware.bin`.
+
+Before updating an existing device, back it up and compare its partition table
+with the build. Do not erase flash or upload a filesystem image during an update.
+Stock TRMNL release binaries and the stock Flash Assistant are intended for
+upstream hardware; build this environment for the custom SparkFun device.
+
+Find the device's USB serial port, then replace `YOUR_SERIAL_PORT` below with it:
+
+```sh
+pio device list
+pio run -e sparkfun_esp32s3_thing_plus -t upload --upload-port YOUR_SERIAL_PORT
+pio device monitor -e sparkfun_esp32s3_thing_plus --port YOUR_SERIAL_PORT
+```
+
+## Wi-Fi and TRMNL setup
+
+The device uses the TRMNL setup and display APIs to obtain credentials and fetch
+images. It needs Wi-Fi access and a device configured with a compatible TRMNL
+service; flashing the firmware alone does not create a service account or register
+the device.
+
+When setup is needed, join the `TRMNL-<MAC suffix>` Wi-Fi network from a phone or
+computer. Open `http://4.3.2.1` if the setup page does not appear automatically,
+then configure the network and service settings in the portal.
+
+For this buttonless build, failed saved-network connection attempts automatically
+reopen the setup portal. Existing Wi-Fi and TRMNL credentials are retained.
+Setup stays open for 15 minutes, then the device sleeps for five minutes and
+retries. No action button is required for this recovery flow.
+
+## Development and checks
 
 ```sh
 pio test -e native
@@ -24,30 +105,35 @@ python3 test/host/test_wifi_session.py
 pio run -e sparkfun_esp32s3_thing_plus
 ```
 
-The `no_ota.csv` partition layout is retained to preserve NVS credentials and
-SPIFFS. Stock OTA is disabled because it cannot support this custom board;
-use a USB update. Factory QA is skipped because it targets TRMNL hardware.
-For this buttonless device, failed saved-network connection attempts automatically
-open the `TRMNL-<MAC suffix>` Wi-Fi setup network. Join it from a phone or computer
-and open `http://4.3.2.1` if the setup page does not appear automatically. Existing
-Wi-Fi and TRMNL credentials are retained. Setup stays open for 15 minutes, then
-sleeps for five minutes and retries; no action button is required.
+Useful starting points:
 
-Before flashing, back up the device and compare its partition table with the
-build. Do not erase flash or upload a filesystem image during an update.
+| Path | Purpose |
+| --- | --- |
+| [`platformio.ini`](platformio.ini) | Build environments, dependencies, and custom board flags |
+| [`src/display.cpp`](src/display.cpp) | Display configuration and image rendering |
+| [`include/sparkfun_spectra6.h`](include/sparkfun_spectra6.h) | Custom panel initialization |
+| [`src/pins.cpp`](src/pins.cpp) | Board pin initialization |
+| [`src/battery/max17048_battery.cpp`](src/battery/max17048_battery.cpp) | Battery gauge integration |
+| [`src/wifi_session.cpp`](src/wifi_session.cpp) | Wi-Fi connection and setup recovery |
+| [`test/host/test_wifi_session.py`](test/host/test_wifi_session.py) | Host Wi-Fi regression checks |
 
-```sh
-pio run -e sparkfun_esp32s3_thing_plus -t upload --upload-port /dev/cu.usbmodem101
-```
+Issues and pull requests are welcome. Include the board and panel model, build
+environment, reproduction steps, and relevant serial logs. Remove Wi-Fi passwords,
+API tokens, and other credentials before sharing logs or configuration files.
 
+## Credits and license
 
-created for the [TRMNL](https://trmnl.com) e-ink display.
+Based on firmware by [TRMNL and its contributors](https://github.com/usetrmnl/trmnl-firmware).
+This fork retains the repository's [GNU GPL v3 license](LICENSE). Bundled
+third-party components retain their own license files.
 
-> [!IMPORTANT]
-> the `main` branch is under constant development and may contain breaking changes. flash at your own risk.
->
-> to access production-ready firmware, check out the [tagged releases](https://github.com/usetrmnl/trmnl-firmware/releases/)
- or use the [Flash Assistant](https://trmnl.com/flash).
+## Upstream reference documentation
+
+The sections below are inherited from upstream and describe its APIs, stock
+hardware, power measurements, and development tools. Stock flashing instructions,
+OTA behavior, reset-button flows, and battery-life estimates do not describe the
+custom SparkFun build. Use the instructions above for this fork.
+
 ## **Algorithm block scheme**
 
 ```mermaid

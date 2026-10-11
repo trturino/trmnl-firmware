@@ -2608,7 +2608,9 @@ void display_show_msg(uint8_t *image_buffer, MSG message_type, const char *messa
         bbep.setCursor((bbep.width() - rect.w) / 2, bbep.height() - 140 - (rect.h*2));
 #endif
         bbep.println(string1);
-#ifdef BOARD_TRMNL_X
+#if defined(WIFI_AUTO_PORTAL_ON_FAILURE)
+        const char string2[] = "Setup will retry automatically in 5 minutes.";
+#elif defined(BOARD_TRMNL_X)
         const char string2[] = "Tap touchbar to try again";
 #else
         const char string2[] = "Press button to try again";

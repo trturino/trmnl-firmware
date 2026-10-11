@@ -20,12 +20,19 @@ Build and test:
 
 ```sh
 pio test -e native
+python3 test/host/test_wifi_session.py
 pio run -e sparkfun_esp32s3_thing_plus
 ```
 
 The `no_ota.csv` partition layout is retained to preserve NVS credentials and
 SPIFFS. Stock OTA is disabled because it cannot support this custom board;
 use a USB update. Factory QA is skipped because it targets TRMNL hardware.
+For this buttonless device, failed saved-network connection attempts automatically
+open the `TRMNL-<MAC suffix>` Wi-Fi setup network. Join it from a phone or computer
+and open `http://4.3.2.1` if the setup page does not appear automatically. Existing
+Wi-Fi and TRMNL credentials are retained. Setup stays open for 15 minutes, then
+sleeps for five minutes and retries; no action button is required.
+
 Before flashing, back up the device and compare its partition table with the
 build. Do not erase flash or upload a filesystem image during an update.
 

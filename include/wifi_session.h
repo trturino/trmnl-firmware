@@ -11,6 +11,8 @@
  * On connection failure, wifiSessionConnect shows WIFI_FAILED (saved credentials: only
  * when should_show_error_now) and deep-sleeps
  * via wifiErrorDeepSleep (does not return on that path).
+ * WIFI_AUTO_PORTAL_ON_FAILURE instead opens setup without clearing credentials,
+ * including on timer wakes, for devices without an action button.
  *
  * X captive portal keeps a single call to touchbar_init_captive_portal_power_off_hook (#508).
  */

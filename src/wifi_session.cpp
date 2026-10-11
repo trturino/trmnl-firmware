@@ -4,6 +4,7 @@
 #include <WifiCaptive.h>
 #include <bl.h>
 #include <config.h>
+#include <display.h>
 #include <globals.h>
 #include <messages.h>
 #include <sleep_session.h>
@@ -105,7 +106,8 @@ void wifiSessionConnect(bool should_show_error_now) {
 // goToSleep();
 #else
 
-  if (WifiCaptivePortal.isSaved()) {
+  bool start_portal = !WifiCaptivePortal.isSaved();
+  if (!start_portal) {
     // WiFi saved, connection
     Log.info("%s [%d]: WiFi saved\r\n", __FILE__, __LINE__);
     int connection_res = connectWithSavedCredentials() ? 1 : 0;
@@ -118,6 +120,10 @@ void wifiSessionConnect(bool should_show_error_now) {
       Log.info("%s [%d]:wifi_connection [DEBUG]: Connected: %s\r\n", __FILE__, __LINE__, ip.c_str());
       preferences.putInt(PREFERENCES_CONNECT_WIFI_RETRY_COUNT, 1);
     } else {
+#ifdef WIFI_AUTO_PORTAL_ON_FAILURE
+      Log_info("Saved WiFi unavailable; opening setup automatically (credentials retained)");
+      start_portal = true;
+#else
       if (should_show_error_now) {
         showMessageWithLogo(WIFI_FAILED);
       }
@@ -125,10 +131,16 @@ void wifiSessionConnect(bool should_show_error_now) {
       Log_fatal_submit("Connection failed! WL Status: %d", WiFi.status());
 
       wifiErrorDeepSleep();
+#endif
     }
-  } else {
-    // WiFi credentials are not saved - start captive portal
-    Log.info("%s [%d]: WiFi NOT saved\r\n", __FILE__, __LINE__);
+  }
+  if (start_portal) {
+    // Also used for buttonless recovery when saved networks cannot be reached.
+    Log_info("Starting WiFi setup portal");
+#ifdef WIFI_AUTO_PORTAL_ON_FAILURE
+    // The portal has a 15-minute timeout. Retry automatically after five minutes.
+    refreshInterval.applyDefault();
+#endif
 
     Log_info("FW version %s", Messages::firmware_version().c_str());
 
@@ -141,7 +153,14 @@ void wifiSessionConnect(bool should_show_error_now) {
     if (!portal_ok) {
       WiFi.disconnect(true);
 
+#ifdef WIFI_AUTO_PORTAL_ON_FAILURE
+      showMessageWithLogo(CAPTIVE_WIFI_TIMEOUT);
+      display_sleep();
+      goToSleep();
+      return;
+#else
       showMessageWithLogo(WIFI_FAILED);
+#endif
 
       Log_error("Failed to connect or hit timeout");
 

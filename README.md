@@ -3,7 +3,7 @@
 A custom [TRMNL firmware](https://github.com/usetrmnl/trmnl-firmware) fork for a
 SparkFun ESP32-S3 Thing Plus and a Waveshare 7.3-inch (E) Spectra 6 color e-paper
 display. This repository is maintained by Rafael Turino at
-[trturino/firmware](https://github.com/trturino/firmware).
+[trturino/trmnl-firmware](https://github.com/trturino/trmnl-firmware).
 
 ## Project goal
 
@@ -60,8 +60,8 @@ extension. Native tests also require a host C/C++ compiler; the Wi-Fi regression
 check requires Python 3.
 
 ```sh
-git clone https://github.com/trturino/firmware.git
-cd firmware
+git clone https://github.com/trturino/trmnl-firmware.git
+cd trmnl-firmware
 pio run -e sparkfun_esp32s3_thing_plus
 ```
 

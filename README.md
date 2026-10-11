@@ -19,7 +19,7 @@ the SparkFun board; upstream TRMNL device environments remain in the repository.
 ## Hardware and wiring
 
 - **Controller:** SparkFun ESP32-S3 Thing Plus, 4 MB flash and 2 MB QSPI PSRAM.
-- **Display:** Waveshare 7.3-inch (E), 800 × 480, Spectra 6 panel.
+- **Display:** [Waveshare 7.3-inch e-Paper HAT (E)](https://www.waveshare.com/7.3inch-e-paper-hat-e.htm?sku=27863), 800 × 480, Spectra 6 panel.
 - **Battery monitoring:** MAX17048 over I2C.
 
 | Connection | ESP32-S3 GPIO |

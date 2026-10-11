@@ -12,7 +12,9 @@ are preserved in `include/sparkfun_spectra6.h`; all refreshes use the full wavef
 Wiring: SCK 12, MOSI 11, CS 10, RST 15, DC 14, BUSY 16. SPI remains at
 2 MHz. The MAX17048 uses SDA 8 / SCL 9, with Qwiic enable on GPIO 45.
 GPIO 2 remains the action input; timed deep sleep preserves the original
-wakeup behavior. GPIO 9 is the I2C clock, not a reset-button input.
+wakeup behavior. Display refreshes keep the CPU awake, matching the original
+firmware and keeping USB diagnostics available; timed deep sleep remains enabled.
+GPIO 9 is the I2C clock, not a reset-button input.
 
 Build and test:
 
